@@ -6,6 +6,8 @@ import 'package:flutter/services.dart' show rootBundle;
 import '../services/player_manager.dart';
 import 'package:material_symbols_icons/material_symbols_icons.dart';
 import 'package:heroicons/heroicons.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class LyricsPage extends StatefulWidget {
   const LyricsPage({super.key});
@@ -13,6 +15,10 @@ class LyricsPage extends StatefulWidget {
   @override
   State<LyricsPage> createState() => _LyricsPageState();
 }
+late VoidCallback _currentListener;
+late VoidCallback _positionListener;
+late VoidCallback _durationListener;
+late VoidCallback _playingListener;
 
 class _LyricsPageState extends State<LyricsPage> {
   String _lyrics = "Loading lyrics...";
@@ -21,42 +27,47 @@ class _LyricsPageState extends State<LyricsPage> {
   String _currentMusicUrl = '';
   String _currentCoverUrl = '';
 
+  bool _fromPlaylist = false;
+  Future<void> Function(String musicUrl, String newCoverUrl)? _updatePlaylistsCallback;
   List<Map<String, dynamic>> _songs = [];
   int _currentIndex = 0;
 
-  @override
-  void initState() {
-    super.initState();
-    PlayerManager.init();
+@override
+void initState() {
+  super.initState();
 
-    // Listen for song change
-    PlayerManager.current.addListener(() {
-      final song = PlayerManager.current.value;
-      if (song == null || !mounted) return;
+  _currentListener = () {
+    final song = PlayerManager.current.value;
+    if (song == null || !mounted) return;
 
-      setState(() {
-        _currentIndex = song['index'];
-        _currentTitle = song['title']?.toString() ?? '';
-        _currentArtist = song['artist']?.toString() ?? '';
-        _currentMusicUrl = song['musicUrl']?.toString() ?? '';
-        _currentCoverUrl = song['coverUrl']?.toString() ?? '';
-      });
-
-      _loadLyrics(song);
+    setState(() {
+      _currentIndex = song['index'];
+      _currentTitle = song['title'] ?? '';
+      _currentArtist = song['artist'] ?? '';
+      _currentMusicUrl = song['musicUrl'] ?? '';
+      _currentCoverUrl = song['coverUrl'] ?? '';
     });
 
-    // Listen for position/duration/isPlaying changes
-    PlayerManager.position.addListener(() {
-      if (mounted) setState(() {});
-    });
-    PlayerManager.duration.addListener(() {
-      if (mounted) setState(() {});
-    });
-    PlayerManager.isPlaying.addListener(() {
-      if (mounted) setState(() {});
-    });
+    _loadLyrics(song);
+  };
 
-    // Auto-next logic
+  _positionListener = () {
+    if (mounted) setState(() {});
+  };
+
+  _durationListener = () {
+    if (mounted) setState(() {});
+  };
+
+  _playingListener = () {
+    if (mounted) setState(() {});
+  };
+
+  PlayerManager.current.addListener(_currentListener);
+  PlayerManager.position.addListener(_positionListener);
+  PlayerManager.duration.addListener(_durationListener);
+  PlayerManager.isPlaying.addListener(_playingListener);
+
     PlayerManager.position.addListener(() {
       final pos = PlayerManager.position.value;
       final dur = PlayerManager.duration.value;
@@ -79,6 +90,14 @@ class _LyricsPageState extends State<LyricsPage> {
       }
     });
   }
+@override
+void dispose() {
+  PlayerManager.current.removeListener(_currentListener);
+  PlayerManager.position.removeListener(_positionListener);
+  PlayerManager.duration.removeListener(_durationListener);
+  PlayerManager.isPlaying.removeListener(_playingListener);
+  super.dispose();
+}
 
   @override
   void didChangeDependencies() {
@@ -87,9 +106,14 @@ class _LyricsPageState extends State<LyricsPage> {
         ModalRoute.of(context)!.settings.arguments as Map<String, dynamic>;
 
     _songs = List<Map<String, dynamic>>.from(args['songs'] as List);
+    PlayerManager.globalSongs.value = List.from(_songs); 
     _currentIndex = args['index'] ?? 0;
     final resume = args['resume'] ?? false;
 
+// 💡 NEW: Retrieve the callback function from arguments
+    _updatePlaylistsCallback = args['updatePlaylistsCallback'] as 
+        Future<void> Function(String, String)?;
+     _fromPlaylist = args['fromPlaylist'] ?? false;
     final song = _songs[_currentIndex];
 
     _currentTitle = song['title']?.toString() ?? '';
@@ -104,155 +128,299 @@ class _LyricsPageState extends State<LyricsPage> {
     }
   }
 
-Future<void> _loadLyrics(Map<String, dynamic> song) async {
-  try {
-    // 1️⃣ If song has lyrics stored (user-added)
-    if (song['lyrics'] != null && song['lyrics'].toString().trim().isNotEmpty) {
-      setState(() => _lyrics = song['lyrics']);
-      return;
+  Future<void> _editAlbumCover() async {
+    final picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: ImageSource.gallery,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 85,
+    );
+
+if (image != null) {
+    final newCoverUrl = image.path; // Store the new path
+    final musicUrl = _currentMusicUrl;
+    setState(() {
+      _currentCoverUrl = image.path;
+      _songs[_currentIndex]['coverUrl'] = _currentCoverUrl;
+      
+      PlayerManager.updateSongCover(_currentMusicUrl, _currentCoverUrl);
+
+      // 🔥 FIX: Update the song in the global list first.
+      if (_currentIndex < PlayerManager.globalSongs.value.length) {
+          PlayerManager.globalSongs.value[_currentIndex]['coverUrl'] = _currentCoverUrl;
+      }
+
+      // 🚀 CORRECT NOTIFICATION: Reassign the list (which is mutable)
+      // or a copy of it, to trigger the ValueListenable.
+      PlayerManager.globalSongs.value = List.from(PlayerManager.globalSongs.value);
+    });
+    if (_updatePlaylistsCallback != null) {
+        // This executes the logic in _updateSongCoverInPlaylists
+        _updatePlaylistsCallback!(musicUrl, newCoverUrl); 
     }
-
-    // 2️⃣ Otherwise load from assets (default songs)
-    final filename = song['title'].toLowerCase().replaceAll(" ", "_");
-    final data = await rootBundle.loadString('assets/logo/lyrics/$filename.txt');
-
-    setState(() => _lyrics = data);
-
-  } catch (e) {
-    setState(() => _lyrics = "Lyrics not available for ${song['title']}.");
   }
 }
 
-Future<void> _playCurrentSong() async {
-  final song = {
-    'title': _currentTitle,
-    'artist': _currentArtist,
-    'musicUrl': _currentMusicUrl,    // asset or localPath
-    'coverUrl': _currentCoverUrl,
-    'lyrics': _songs[_currentIndex]['lyrics'],
-    'index': _currentIndex,
-    'songs': _songs,
-  };
+final FirebaseFirestore _firestore = FirebaseFirestore.instance; // Add this instance
 
-  await PlayerManager.playSong(song);
-}
+  Future<void> _saveLyricsToFirestore(String newLyrics) async {
+    final currentSong = _songs[_currentIndex];
+    final docId = currentSong['id']; // We assume 'id' holds the Firestore Document ID
 
+    if (docId == null) {
+      // This is likely an asset song or a song that wasn't properly saved initially.
+      print("Error: Song document ID (id) is missing. Cannot update Firestore.");
+      return;
+    }
 
-void _playNextSong() {
-  setState(() {
-    _currentIndex = PlayerManager.shuffle.value
-        ? Random().nextInt(_songs.length)
-        : (_currentIndex + 1) % _songs.length;
-  });
-  _updateSong();
-}
+    try {
+      // Find the song document in the 'songs' collection by its ID
+      await _firestore.collection('songs').doc(docId).update({
+        'lyrics': newLyrics,
+      });
 
-void _playPreviousSong() {
-  setState(() {
-    _currentIndex = PlayerManager.shuffle.value
-        ? Random().nextInt(_songs.length)
-        : (_currentIndex - 1 + _songs.length) % _songs.length;
-  });
-  _updateSong();
-}
+      // Also ensure the 'lyrics' in the local song object is updated
+      // since the main app might read from this local song object list.
+      // This is redundant since you do it in _editLyrics, but good practice.
+      _songs[_currentIndex]['lyrics'] = newLyrics;
 
-void _updateSong() {
-  final song = _songs[_currentIndex];
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Lyrics updated in Firestore.")),
+      );
+    } catch (e) {
+      print("Failed to update lyrics in Firestore: $e");
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Error saving lyrics to cloud.")),
+      );
+    }
+  }
 
-  setState(() {
-    _currentTitle = song['title']?.toString() ?? '';
-    _currentArtist = song['artist']?.toString() ?? '';
-    _currentMusicUrl = song['musicUrl']?.toString() ?? song['localPath']?.toString() ?? '';
-    _currentCoverUrl = song['coverUrl']?.toString() ?? '';
-  });
+  Future<void> _editLyrics() async {
+    final controller = TextEditingController(text: _lyrics);
+    await showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Edit Lyrics'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: TextField(
+            controller: controller,
+            maxLines: 15,
+            decoration: const InputDecoration(border: OutlineInputBorder()),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final newLyrics = controller.text;
+              setState(() {
+                _lyrics = controller.text;
+                _songs[_currentIndex]['lyrics'] = _lyrics;
+                
+              });
 
-  _loadLyrics(song);
-  _playCurrentSong();
-}
+              _saveLyricsToFirestore(newLyrics);
+              PlayerManager.updateLyrics(_currentMusicUrl, newLyrics);
+              Navigator.pop(context);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
 
+  Future<void> _loadLyrics(Map<String, dynamic> song) async {
+    try {
+      if (song['lyrics'] != null &&
+          song['lyrics'].toString().trim().isNotEmpty) {
+        setState(() => _lyrics = song['lyrics']);
+        return;
+      }
 
-void _toggleShuffle() {
-  PlayerManager.shuffle.value = !PlayerManager.shuffle.value;
-  setState(() {});
-}
+      final filename =
+          song['title'].toLowerCase().replaceAll(" ", "_");
+      final data = await rootBundle
+          .loadString('assets/logo/lyrics/$filename.txt');
 
-String _formatTime(Duration d) {
-  String twoDigits(int n) => n.toString().padLeft(2, '0');
-  return "${twoDigits(d.inMinutes.remainder(60))}:${twoDigits(d.inSeconds.remainder(60))}";
-}
+      setState(() => _lyrics = data);
+    } catch (e) {
+      setState(() =>
+          _lyrics = "Lyrics not available for ${song['title']}.");
+    }
+  }
 
-ImageProvider _coverImage(String url) {
-  if (url.startsWith('assets/')) return AssetImage(url);
-  return FileImage(File(url));
-}
+  Future<void> _playCurrentSong() async {
+    final song = {
+      'title': _currentTitle,
+      'artist': _currentArtist,
+      'musicUrl': _currentMusicUrl,
+      'coverUrl': _currentCoverUrl,
+      'lyrics': _songs[_currentIndex]['lyrics'],
+      'index': _currentIndex,
+      'songs': _songs,
+    };
 
+    await PlayerManager.playSong(song);
+  }
 
-@override
-Widget build(BuildContext context) {
-  return Scaffold(
-    backgroundColor: const Color.fromARGB(255, 73, 70, 70),
-    appBar: AppBar(
-      backgroundColor: Colors.transparent,
-      foregroundColor: Colors.white,
-      elevation: 0,
+  void _playNextSong() {
+    setState(() {
+      _currentIndex = PlayerManager.shuffle.value
+          ? Random().nextInt(_songs.length)
+          : (_currentIndex + 1) % _songs.length;
+    });
+    _updateSong();
+  }
+
+  void _playPreviousSong() {
+    setState(() {
+      _currentIndex = PlayerManager.shuffle.value
+          ? Random().nextInt(_songs.length)
+          : (_currentIndex - 1 + _songs.length) % _songs.length;
+    });
+    _updateSong();
+  }
+
+  void _updateSong() {
+    final song = _songs[_currentIndex];
+
+    setState(() {
+      _currentTitle = song['title']?.toString() ?? '';
+      _currentArtist = song['artist']?.toString() ?? '';
+      _currentMusicUrl =
+          song['musicUrl']?.toString() ?? song['localPath']?.toString() ?? '';
+      _currentCoverUrl = song['coverUrl']?.toString() ?? '';
+    });
+
+    _loadLyrics(song);
+    _playCurrentSong();
+  }
+
+  void _toggleShuffle() {
+    PlayerManager.shuffle.value = !PlayerManager.shuffle.value;
+    setState(() {});
+  }
+
+  String _formatTime(Duration d) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    return "${twoDigits(d.inMinutes.remainder(60))}:${twoDigits(d.inSeconds.remainder(60))}";
+  }
+
+  ImageProvider _coverImage(String url) {
+    if (url.startsWith('assets/')) return AssetImage(url);
+    return FileImage(File(url));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color.fromARGB(255, 73, 70, 70),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+        elevation: 0,
+
+        leading: IconButton(
+        icon: const HeroIcon(
+          HeroIcons.chevronDown, // The downward pointing arrow icon
+          style: HeroIconStyle.outline,
+          color: Colors.white,
+          size: 30,
+        ),
+        onPressed: () {
+          // This will dismiss the current page and go back to the previous screen
+          Navigator.pop(context);
+        },
+      ),
+        actions: [
+  if (!_fromPlaylist && !_currentMusicUrl.startsWith("assets/"))
+    PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, color: Colors.white),
+      onSelected: (value) {
+        if (value == 'edit_cover') {
+          _editAlbumCover();
+        } else if (value == 'edit_lyrics') {
+          _editLyrics();
+        }
+      },
+      itemBuilder: (_) => const [
+        PopupMenuItem(
+          value: 'edit_cover',
+          child: Text('Edit Album Cover'),
+        ),
+        PopupMenuItem(
+          value: 'edit_lyrics',
+          child: Text('Edit Lyrics'),
+        ),
+      ],
     ),
-    body: SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          // Album Cover
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 400),
-            child: Container(
-              key: ValueKey(_currentCoverUrl),
-              width: MediaQuery.of(context).size.width * 0.8,
-              height: MediaQuery.of(context).size.width * 0.8,
-              margin: const EdgeInsets.only(bottom: 20),
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                image: DecorationImage(
-                  image: _coverImage(_currentCoverUrl),
-                  fit: BoxFit.cover,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black54,
-                    blurRadius: 12,
-                    offset: const Offset(2, 4),
+],
+
+      ),
+
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Album cover
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 400),
+              child: Container(
+                key: ValueKey(_currentCoverUrl),
+                width: MediaQuery.of(context).size.width * 0.8,
+                height: MediaQuery.of(context).size.width * 0.8,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  image: DecorationImage(
+                    image: _coverImage(_currentCoverUrl),
+                    fit: BoxFit.cover,
                   ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black54,
+                      blurRadius: 12,
+                      offset: const Offset(2, 4),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            // Title & Artist
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 400),
+              child: Column(
+                key: ValueKey(_currentTitle + _currentArtist),
+                children: [
+                  Text(
+                    _currentTitle,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    "by $_currentArtist",
+                    style: const TextStyle(
+                      fontSize: 18,
+                      color: Color.fromARGB(200, 255, 255, 255),
+                    ),
+                  ),
+                  const SizedBox(height: 75),
                 ],
               ),
             ),
-          ),
-
-          // Title & Artist
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 400),
-            child: Column(
-              key: ValueKey(_currentTitle + _currentArtist),
-              children: [
-                Text(
-                  _currentTitle,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  "by $_currentArtist",
-                  style: const TextStyle(
-                    fontSize: 18,
-                    color: Color.fromARGB(200, 255, 255, 255),
-                  ),
-                ),
-                const SizedBox(height: 75),
-              ],
-            ),
-          ),
 
           // Slider & timing
         ValueListenableBuilder(
@@ -401,7 +569,8 @@ Widget build(BuildContext context) {
           const SizedBox(height: 20),
 
           Container(
-            height: 350, // fixed height for the whole lyrics area
+            width: double.infinity,          // ✅ FIXED WIDTH
+            height: 350,                      // ✅ FIXED HEIGHT
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Colors.black87,

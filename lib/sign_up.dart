@@ -44,14 +44,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
         await users.add({
           'first_name': _firstNameController.text,
           'last_name': _lastNameController.text,
-          'full_name': '${_firstNameController.text} ${_lastNameController.text}', // NEW
+          'full_name': '${_firstNameController.text} ${_lastNameController.text}',
           'username': _usernameController.text,
           'email': _emailController.text,
           'password': _passwordController.text,
-          'photo_url': '', // default empty
+          'photo_url': '',
           'isGoogleUser': false,
         });
-
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -62,13 +61,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
           backgroundColor: const Color(0xFF1DB954),
           behavior: SnackBarBehavior.floating,
           margin: const EdgeInsets.all(12),
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ));
 
         await Future.delayed(const Duration(seconds: 1));
         if (!mounted) return;
-        Navigator.of(context).pushReplacement(CupertinoPageRoute(builder: (_) => const LoginScreen()));
+        Navigator.of(context).pushReplacement(
+            CupertinoPageRoute(builder: (_) => const LoginScreen()));
       } catch (e) {
         _showError("Sign-Up Failed: $e");
       } finally {
@@ -115,7 +115,8 @@ class _SignUpScreenState extends State<SignUpScreen> {
               Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.arrow_back, color: Color(0xFF1DB954)),
+                    icon:
+                        const Icon(Icons.arrow_back, color: Color(0xFF1DB954)),
                     onPressed: () {
                       Navigator.pushAndRemoveUntil(
                         context,
@@ -140,22 +141,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 key: _formKey,
                 child: Column(
                   children: [
-                    _buildTextField(_firstNameController, 'First Name'),
+                    _buildTextField(_firstNameController, 'First Name',
+                        isName: true),
                     const SizedBox(height: 16),
-                    _buildTextField(_lastNameController, 'Last Name'),
+                    _buildTextField(_lastNameController, 'Last Name',
+                        isName: true),
                     const SizedBox(height: 16),
                     _buildTextField(_usernameController, 'Username'),
                     const SizedBox(height: 16),
                     _buildTextField(_emailController, 'Email', isEmail: true),
                     const SizedBox(height: 16),
                     _buildTextField(_passwordController, 'Password',
-                        obscureText: _obscurePassword, isPassword: true),
+                        obscureText: _obscurePassword,
+                        isPassword: true),
                   ],
                 ),
               ),
               const SizedBox(height: 30),
-
-              // Create Account button -> show loader while creating
               _loading
                   ? const CircularProgressIndicator(color: Color(0xFF1DB954))
                   : SizedBox(
@@ -168,7 +170,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(15)),
                         ),
-                        
                         child: const Text(
                           'Create Account',
                           style: TextStyle(
@@ -178,7 +179,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         ),
                       ),
                     ),
-                                  const SizedBox(height: 20),
+              const SizedBox(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -186,11 +187,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     onTap: () {
                       Navigator.push(
                         context,
-                        CupertinoPageRoute(builder: (_) => const LoginScreen()),
+                        CupertinoPageRoute(
+                            builder: (_) => const LoginScreen()),
                       );
                     },
                     child: const Text(
-                      "Aldready have an account? Login",
+                      "Already have an account? Login",
                       style: TextStyle(
                         color: Color(0xFF1DB954),
                         fontSize: 16,
@@ -208,7 +210,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 
   Widget _buildTextField(TextEditingController controller, String label,
-      {bool obscureText = false, bool isEmail = false, bool isPassword = false}) {
+      {bool obscureText = false,
+      bool isEmail = false,
+      bool isPassword = false,
+      bool isName = false}) {
     return TextFormField(
       controller: controller,
       obscureText: obscureText,
@@ -216,9 +221,24 @@ class _SignUpScreenState extends State<SignUpScreen> {
       keyboardType: isEmail ? TextInputType.emailAddress : TextInputType.text,
       validator: (value) {
         if (value == null || value.isEmpty) return 'Enter $label';
-        if (isEmail && !RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(value)) {
+
+        if (isName && !RegExp(r"^[a-zA-Z]+$").hasMatch(value)) {
+          return '$label can only contain letters';
+        }
+
+        if (isEmail &&
+            (!value.contains('@') || !value.contains('.com'))) {
           return 'Enter a valid email';
         }
+
+        if (isPassword) {
+          final pattern =
+              r'^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*(),.?":{}|<>]).{8,}$';
+          if (!RegExp(pattern).hasMatch(value)) {
+            return 'Password must be 8+ chars, include 1 uppercase,\n1 number & 1 special char';
+          }
+        }
+
         return null;
       },
       decoration: InputDecoration(

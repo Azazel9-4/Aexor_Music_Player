@@ -19,11 +19,15 @@ class OtpVerificationPage extends StatefulWidget {
 }
 
 class _OtpVerificationPageState extends State<OtpVerificationPage> {
-  final _codeController = TextEditingController();
+  final List<TextEditingController> _controllers =
+      List.generate(6, (_) => TextEditingController());
+  final List<FocusNode> _focusNodes = List.generate(6, (_) => FocusNode());
   bool _verifying = false;
 
+  String get _enteredOtp => _controllers.map((c) => c.text).join();
+
   Future<void> _verifyOtp() async {
-    if (_codeController.text != widget.otp) {
+    if (_enteredOtp != widget.otp) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("Invalid OTP"),
@@ -35,7 +39,6 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
 
     setState(() => _verifying = true);
 
-    // Mark user as verified in Firestore
     await FirebaseFirestore.instance
         .collection('users')
         .doc(widget.userId)
@@ -43,11 +46,52 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
 
     setState(() => _verifying = false);
 
-    // Navigate to HomePage
     if (!mounted) return;
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => const HomePage()),
+    );
+  }
+
+  @override
+  void dispose() {
+    for (var c in _controllers) c.dispose();
+    for (var f in _focusNodes) f.dispose();
+    super.dispose();
+  }
+
+  Widget _buildOtpBox(int index) {
+    return SizedBox(
+      width: 50,
+      child: TextField(
+        controller: _controllers[index],
+        focusNode: _focusNodes[index],
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: Colors.white, fontSize: 24),
+        keyboardType: TextInputType.number,
+        maxLength: 1,
+        decoration: InputDecoration(
+          counterText: "",
+          enabledBorder: OutlineInputBorder(
+            borderSide: const BorderSide(color: Colors.white),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderSide: const BorderSide(color: Colors.green),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          filled: true,
+          fillColor: Colors.white10,
+        ),
+        onChanged: (val) {
+          if (val.isNotEmpty && index < 5) {
+            _focusNodes[index + 1].requestFocus();
+          } else if (val.isEmpty && index > 0) {
+            _focusNodes[index - 1].requestFocus();
+          }
+          setState(() {});
+        },
+      ),
     );
   }
 
@@ -68,21 +112,11 @@ class _OtpVerificationPageState extends State<OtpVerificationPage> {
               style: const TextStyle(color: Colors.white, fontSize: 18),
             ),
             const SizedBox(height: 25),
-            TextField(
-              controller: _codeController,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.white, fontSize: 24),
-              decoration: const InputDecoration(
-                counterText: "",
-                hintText: "",
-                hintStyle: TextStyle(color: Colors.grey, fontSize: 24),
-                enabledBorder:
-                    UnderlineInputBorder(borderSide: BorderSide(color: Colors.white)),
-                focusedBorder:
-                    UnderlineInputBorder(borderSide: BorderSide(color: Colors.green)),
-              ),
+
+            // OTP boxes
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: List.generate(6, (i) => _buildOtpBox(i)),
             ),
             const SizedBox(height: 30),
             ElevatedButton(

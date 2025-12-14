@@ -9,7 +9,6 @@ import 'otp_verification_page.dart';
 import 'log_in.dart';
 import 'sign_up.dart';
 import 'song_lyrics_display/navigation/lyrics_page.dart';
-import 'pages/account_info_page.dart';
 import 'song_lyrics_display/navigation/home_page.dart';
 import 'package:complete_music_player/screens/add_song_page.dart';
 
@@ -34,7 +33,6 @@ class MyApp extends StatelessWidget {
       home: const AuthWrapper(),
       routes: {
         '/lyrics': (_) => const LyricsPage(),
-        '/account': (_) => const AccountInfoPage(),
         '/login': (_) => const HomeScreen(),
         '/add_song': (_) => const AddSongPage(),
       },
